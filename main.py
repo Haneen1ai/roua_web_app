@@ -3,22 +3,44 @@ import signal
 import sys
 import threading
 from dotenv import load_dotenv
-from flask import Flask, render_template
+from flask import Flask, render_template  # ما غيّرته
 from elevenlabs.client import ElevenLabs
 from elevenlabs.conversational_ai.conversation import Conversation
 from elevenlabs.conversational_ai.default_audio_interface import DefaultAudioInterface
 
+# ⬇️ إضافة بسيطة: بنحتاج requests عشان نجيب توكن WebRTC من ElevenLabs
+import requests
+from flask import jsonify  # لو حبيتي ترجّعين JSON، بس بنرجّع نص التوكن
+
+# إعداد Flask
 app = Flask(__name__)
 
 @app.route('/')
 def index():
     return render_template('index.html')
 
+# ⬇️ إضافة بسيطة: مسار يعطي توكن المحادثة للواجهة
+@app.route('/conversation-token', methods=['GET'])
+def conversation_token():
+    load_dotenv()
+    API_KEY = os.environ.get('ELEVENLABS_API_KEY')
+    AGENT_ID = os.environ.get('AGENT_ID')
+    if not API_KEY or not AGENT_ID:
+        return ("Missing ELEVENLABS_API_KEY or AGENT_ID", 400)
+
+    r = requests.get(
+        f"https://api.elevenlabs.io/v1/convai/conversation/token?agent_id={AGENT_ID}",
+        headers={"xi-api-key": API_KEY},
+        timeout=15
+    )
+    if r.status_code != 200:
+        return (f"Failed to get conversation token: {r.text}", 502)
+
+    token = r.json().get("token")
+    return token or ("No token in response", 502)
+
 def run_flask():
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
-
-
+    app.run(host='0.0.0.0', port=5000, debug=False)
 
 def main():
     # شغل Flask في خيط منفصل

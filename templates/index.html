@@ -4,21 +4,87 @@
 <meta charset="UTF-8">
 <title>واجهة رؤى</title>
 <style>
-  body {
-    margin: 0;
-    background: black;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    height: 100vh;
-  }
-  img {
-    height: 100vh;
-    object-fit: contain;
-  }
+  body{margin:0;background:#000;display:flex;justify-content:center;align-items:center;height:100vh;flex-direction:column;gap:16px}
+  img.bg{background:#000;user-select:none;-webkit-user-drag:none;pointer-events:none;height:70vh;width:auto;object-fit:cover}
+  @media (min-aspect-ratio: 9/16){ img.bg{width:60vw;height:auto;object-fit:cover} }
+  .controls{display:flex;gap:12px}
+  button{padding:10px 18px;border:0;border-radius:8px;cursor:pointer}
+  #status{color:#9eea9e;font-family:system-ui,Arial,sans-serif}
 </style>
 </head>
 <body>
-  <img src="{{ url_for('static', filename='roua.jpg') }}" alt="رؤى">
+  <img src="{{ url_for('static', filename='roua.jpg') }}" class="bg" alt="Roa Background">
+
+  <div class="controls">
+    <button id="start">بدء المحادثة</button>
+    <button id="stop" disabled>إيقاف</button>
+  </div>
+  <div id="status"></div>
+
+  <!-- صوت الخرج من البوت -->
+  <audio id="agent-audio" autoplay playsinline></audio>
+
+  <script type="module">
+    // نستورد عميل ElevenLabs (يدعم WebRTC/WebSocket). هذا مسار ESM من jsdelivr.
+    import { Conversation } from "https://cdn.jsdelivr.net/npm/@elevenlabs/client@0.5.0/+esm";
+
+    const startBtn = document.getElementById('start');
+    const stopBtn  = document.getElementById('stop');
+    const statusEl = document.getElementById('status');
+
+    let convo = null;
+
+    function setStatus(t){ statusEl.textContent = t; }
+
+    async function start() {
+      try {
+        setStatus('نجهّز المايك…');
+        // اطلب تصريح المايك بدري لتجنّب بلوك المتصفح
+        await navigator.mediaDevices.getUserMedia({ audio: true });
+
+        setStatus('نجيب توكن الجلسة…');
+        const tokenRes = await fetch('/conversation-token');
+        if (!tokenRes.ok) throw new Error('فشل جلب التوكن');
+        const conversationToken = await tokenRes.text();
+
+        setStatus('نبدأ الجلسة مع رؤى…');
+        convo = await Conversation.startSession({
+          conversationToken,
+          connectionType: "webrtc",   // مباشر
+          onConnect: () => setStatus('متصلة — تكلمي معها الآن ✨'),
+          onDisconnect: () => setStatus('انتهت الجلسة'),
+          onError: (e) => setStatus(`خطأ: ${e?.message || e}`),
+          onMessage: (m) => {
+            // تراك النصوص (اختياري)
+            // console.log('msg', m);
+          },
+        });
+
+        // لو تحبين تتحكمين بالصوت، SDK يوجّه الصوت تلقائيًا للخرج الافتراضي.
+        // ما نحتاج نوصّل <audio> يدويًا، لكنه موجود لو احتجتي مستقبلاً.
+
+        startBtn.disabled = true;
+        stopBtn.disabled  = false;
+      } catch (err) {
+        setStatus(`خطأ: ${err?.message || err}`);
+      }
+    }
+
+    async function stop() {
+      try {
+        if (convo) {
+          await convo.endSession();
+          convo = null;
+        }
+      } finally {
+        startBtn.disabled = false;
+        stopBtn.disabled  = true;
+        setStatus('أوقفت الجلسة.');
+      }
+    }
+
+    startBtn.addEventListener('click', start);
+    stopBtn.addEventListener('click', stop);
+  </script>
 </body>
 </html>
