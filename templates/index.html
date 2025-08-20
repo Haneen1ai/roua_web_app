@@ -1,70 +1,20 @@
-<!DOCTYPE html>
-<html lang="ar">
-<head>
-  <meta charset="UTF-8" />
-  <title>واجهة رؤى</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>
-    body{margin:0;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh}
-    button{padding:12px 18px;font-size:16px;cursor:pointer}
-    img.bg{height:60vh;width:auto;user-select:none;-webkit-user-drag:none;pointer-events:none;object-fit:cover;margin-bottom:16px}
-  </style>
-</head>
-<body>
-  <img src="{{ url_for('static', filename='roua.jpg') }}" class="bg" alt="Roa Background" />
-  <button id="startBtn">ابدأ المحادثة الصوتية</button>
-
-  <!-- مهم: عنصر الصوت اللي بنشبك فيه صوت البوت -->
-  <audio id="botAudio" autoplay playsinline></audio>
-
-  <script>
-    const startBtn = document.getElementById('startBtn');
-    const botAudio = document.getElementById('botAudio');
-
-    // أحيانًا يحتاج المتصفح تفاعل علشان يفك الـ AudioContext
-    async function unlockAudio() {
-      try {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        if (ctx.state === 'suspended') await ctx.resume();
-      } catch (_) {}
-    }
-
-    startBtn.addEventListener('click', async () => {
-      startBtn.disabled = true;
-      await unlockAudio();
-
-      try {
-        // 1) خذي التوكن من باك-إندك
-        const token = await fetch('/conversation-token').then(r => r.text());
-        if (!token  token.startsWith('Missing')  token.startsWith('Failed')) {
-          alert('فشل جلب التوكن من السيرفر'); startBtn.disabled = false; return;
+let sum = 0; for (let i=0;i<buf.length;i++) sum += Math.abs(buf[i]-128);
+            const level = sum / buf.length;
+            if (!speaking && level > THRESH) {
+              speaking = true; setStatus('البوت يتكلم الآن…', 'bot');
+            } else if (speaking && level <= THRESH) {
+              speaking = false; setStatus('تكلم الآن', 'user');
+            }
+          }, 120);
         }
 
-        // 2) أسّسي اتصال WebRTC
-        const pc = new RTCPeerConnection({
-          iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }]
-        });
-
-        // 3) اربطي ستريم صوت البوت بعنصر <audio>
-        const remoteStream = new MediaStream();
-        pc.addEventListener('track', (e) => {
-          remoteStream.addTrack(e.track);
-          botAudio.srcObject = remoteStream;
-          botAudio.muted = false;
-          botAudio.volume = 1.0;
-          botAudio.play().catch(()=>{}); // في حال المتصفح يطلب تفاعل
-        });
-
-        // 4) خذي صوت المستخدم واضيفيه لل-peer
         const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
         mic.getTracks().forEach(t => pc.addTrack(t, mic));
+        setStatus('تكلم الآن', 'user');
 
-        // 5) أنشئي عرض (offer) وارسلـيه لـ ElevenLabs مع التوكن
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
 
-        // نقطة الاتصال الخاصة بـ ElevenLabs WebRTC (SDK/REST قد تختلف حسب وثائقهم)
-        // بعض الإصدارات تستخدم هذا المسار:
         const resp = await fetch(
           'https://api.elevenlabs.io/v1/convai/conversation/websocket/webrtc',
           {
@@ -76,18 +26,17 @@
 
         if (!resp.ok) {
           console.error(await resp.text());
-          alert('فشل تهيئة اتصال WebRTC مع ElevenLabs');
-          startBtn.disabled = false; return;
+          alert('فشل تهيئة اتصال WebRTC مع المزود');
+          startBtn.disabled = false; setStatus('فشل البدء. أعيدي المحاولة.', null); return;
         }
 
         const answerSdp = await resp.text();
         await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
 
-        // ✅ الآن المفروض تسمعين صوت البوت أول ما يرد
       } catch (err) {
         console.error(err);
         alert('صار خطأ في بدء الاتصال الصوتي');
-        startBtn.disabled = false;
+        startBtn.disabled = false; setStatus('فشل البدء. أعيدي المحاولة.', null);
       }
     });
   </script>
