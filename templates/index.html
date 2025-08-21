@@ -8,12 +8,10 @@
     margin:0;background:#000;display:flex;justify-content:center;align-items:center;
     height:100vh;flex-direction:column;gap:16px;overflow:hidden
   }
-  /* الخلفية (صورة/فيديو) تغطي الشاشة بالكامل */
   .bg{
     position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;user-select:none;
     -webkit-user-drag:none;pointer-events:none;background:#000
   }
-  /* نخلي زرّين والتحكم ظاهرين فوق الخلفية */
   .controls{position:relative;z-index:2;display:flex;gap:12px}
   button{padding:10px 18px;border:0;border-radius:8px;cursor:pointer}
   #status{position:relative;z-index:2;color:#9eea9e;font-family:system-ui,Arial,sans-serif}
@@ -23,11 +21,11 @@
   <!-- الصورة الافتراضية -->
   <img src="{{ url_for('static', filename='roua.jpg') }}" id="bgImg" class="bg" alt="Roa Background">
 
-  <!-- الفيديو الذي يظهر أثناء كلام البوت -->
+  <!-- الفيديو أثناء كلام البوت -->
   <video id="rouaVideo"
          class="bg"
          src="{{ url_for('static', filename='roua.MP4') }}"
-         preload="auto"
+         autoplay
          muted
          playsinline
          loop
@@ -39,45 +37,46 @@
   </div>
   <div id="status"></div>
 
-  <!-- صوت الخرج من البوت -->
+  <!-- صوت البوت -->
   <audio id="agent-audio" autoplay playsinline></audio>
 
   <script type="module">
-    // نستورد عميل ElevenLabs (يدعم WebRTC/WebSocket). هذا مسار ESM من jsdelivr.
     import { Conversation } from "https://cdn.jsdelivr.net/npm/@elevenlabs/client@0.5.0/+esm";
 
-    const startBtn = document.getElementById('start');
-    const stopBtn  = document.getElementById('stop');
-    const statusEl = document.getElementById('status');
-    const bgImg    = document.getElementById('bgImg');
-    const vid      = document.getElementById('rouaVideo');
+    const startBtn   = document.getElementById('start');
+    const stopBtn    = document.getElementById('stop');
+    const statusEl   = document.getElementById('status');
+    const bgImg      = document.getElementById('bgImg');
+    const vid        = document.getElementById('rouaVideo');
+    const agentAudio = document.getElementById('agent-audio');
 
     let convo = null;
 
     function setStatus(t){ statusEl.textContent = t; }
 
     function showVideo(){
-      if (bgImg) bgImg.style.display = 'none';
-      if (vid){
-        vid.style.display = 'block';
-        // نضمن التشغيل فورًا (ميوت لتفادي قيود المتصفح)
-        vid.play().catch(()=>{});
-      }
+      bgImg.style.display = 'none';
+      vid.style.display = 'block';
+      vid.play().catch(()=>{});
+    }
+    function showImage(){
+      vid.pause();
+      vid.currentTime = 0;
+      vid.style.display = 'none';
+      bgImg.style.display = 'block';
     }
 
-    function showImage(){
-      if (vid){
-        vid.pause();
-        vid.currentTime = 0;
-        vid.style.display = 'none';
-      }
-      if (bgImg) bgImg.style.display = 'block';
+    function wireAudioEvents(){
+      agentAudio.addEventListener('playing', showVideo);
+      ['pause','ended','waiting','stalled','suspend','emptied'].forEach(ev=>{
+        agentAudio.addEventListener(ev, showImage);
+      });
     }
 
     async function start() {
       try {
         setStatus('نجهّز المايك…');
-        await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
 
         setStatus('نجيب توكن الجلسة…');
         const tokenRes = await fetch('/conversation-token');
@@ -87,24 +86,22 @@
         setStatus('نبدأ الجلسة مع رؤى…');
         convo = await Conversation.startSession({
           conversationToken,
-          connectionType: "webrtc",   // مباشر
-          onConnect: () => setStatus('متصلة — تكلم معها الآن ✨'),
+          connectionType: "webrtc",
+          onConnect: () => setStatus('متصلة — تكلمي معها الآن ✨'),
           onDisconnect: () => { setStatus('انتهت الجلسة'); showImage(); },
           onError: (e) => setStatus(`خطأ: ${e?.message || e}`),
-
-          // يبدأ كلام البوت -> شغّل الفيديو
-          onAgentResponseStart: () => { showVideo(); },
-
-          // انتهى كلام البوت/سكت -> ارجع للصورة
-          onAgentResponseStop: () => { showImage(); },
-
-          onMessage: (m) => {
-            // تراك النصوص (اختياري)
-            // console.log('msg', m);
-          },
         });
 
-        // افتراضيًا نعرض الصورة
+        const remoteStream =
+          (convo.getRemoteMediaStream && convo.getRemoteMediaStream()) ||
+          (convo.getRemoteStream && convo.getRemoteStream()) || null;
+
+        if (remoteStream) {
+          agentAudio.srcObject = remoteStream;
+          await agentAudio.play().catch(()=>{});
+        }
+
+        wireAudioEvents();
         showImage();
 
         startBtn.disabled = true;
