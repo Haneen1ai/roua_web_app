@@ -4,182 +4,225 @@
   <meta charset="UTF-8" />
   <title>واجهة رؤى</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
   <style>
-    html, body { margin:0; height:100%; background:#000; overflow:hidden; font-family:system-ui,-apple-system,Segoe UI,Roboto,"Noto Sans Arabic",sans-serif; }
-    .container { position:relative; width:100%; height:100%; }
-    /* الخلفية: تغطي الشاشة كاملة */
-    img.bg {
-      position:absolute; inset:0;
-      width:100%; height:100%;
-      object-fit:cover;
-      user-select:none; -webkit-user-drag:none; pointer-events:none;
-    }
-    /* الشريط السفلي (التعليقات + الزر) */
-    .controls {
-      position:absolute; left:50%; bottom:28px; transform:translateX(-50%);
-      display:flex; flex-direction:column; align-items:center; gap:12px;
-    }
-    .status {
-      color:#9ee; font-size:24px; font-weight:700;
-      text-shadow:0 0 6px #000;
-      display:flex; align-items:center; gap:10px; min-height:28px;
-    }
-    .dot { width:12px; height:12px; border-radius:50%; background:#888; opacity:.7; }
-    .status.user .dot { background:#3ad63a; animation:pulse 1.2s infinite; }
-    .status.bot  .dot { background:#1e90ff; animation:blink .6s infinite; }
-    @keyframes pulse { 0%{transform:scale(.9)} 50%{transform:scale(1.12)} 100%{transform:scale(.9)} }
-    @keyframes blink { 0%,100%{opacity:.4} 50%{opacity:1} }
+    :root { --fade-ms: 160; }
+    html, body { margin:0; height:100%; background:#000; }
+    * { box-sizing: border-box; }
 
-    button {
-      padding:14px 22px; font-size:20px; font-weight:800;
-      border:0; border-radius:10px; background:#1e90ff; color:#fff; cursor:pointer;
+    /* مسرح ملء الشاشة */
+    .stage {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
     }
-    button:disabled { opacity:.6; cursor:not-allowed; }
+
+    /* الصورة والفيديو نفس المقاس والقص */
+    .media {
+      position: absolute;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      object-fit: cover;      /* يملأ الشاشة ويحافظ على النسبة */
+      object-position: center;
+      -webkit-user-drag: none;
+      pointer-events: none;
+      transition: opacity var(--fade-ms) linear;
+    }
+    .bg   { opacity: 1; }
+    .talk { opacity: 0; }
+
+    /* أزرار التحكم (كما هي) */
+    .controls {
+      position: absolute;
+      z-index: 10;
+      left: 50%;
+      bottom: 4vh;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 12px;
+    }
+    button {
+      padding: 12px 18px;
+      font-size: 16px;
+      border: 0;
+      border-radius: 10px;
+      cursor: pointer;
+      background: #0a84ff;
+      color: #fff;
+    }
+    button:disabled { opacity: .6; cursor: default; }
   </style>
 </head>
 <body>
-  <div class="container">
-    <!-- الخلفية (الصورة تغطي الواجهة كاملة) -->
-    <img src="/static/roua.jpg" class="bg" alt="رؤى" />
+  <div class="stage" id="stage">
+    <!-- صورة الخلفية فل سكرين -->
+    <img
+      src="{{ url_for('static', filename='roua.jpg') }}"
+      class="media bg"
+      alt="Roa Background"
+      draggable="false"
+    />
 
-    <!-- الشريط السفلي: التعليقات + زر البدء/الإيقاف -->
+    <!-- فيديو 1s (Blink/حركة بسيطة) ينعاد وقت كلام البوت -->
+    <video
+      id="talkVideo"
+      class="media talk"
+      src="{{ url_for('static', filename='roua_blink.mp4') }}"
+      muted
+      playsinline
+      preload="auto"
+      loop
+      tabindex="-1"
+    ></video>
+
+    <!-- الأزرار كما هي -->
     <div class="controls">
-      <div id="status" class="status">
-        <span class="dot"></span><span id="statusText">اضغطي "بدء المحادثة" للبدء</span>
-      </div>
-      <button id="startBtn">بدء المحادثة الصوتية</button>
+      <button id="startBtn">ابدأ المحادثة الصوتية</button>
     </div>
   </div>
 
-  <!-- عنصر صوت البوت -->
+  <!-- مسار صوت البوت -->
   <audio id="botAudio" autoplay playsinline></audio>
 
   <script>
-    const startBtn = document.getElementById('startBtn');
-    const botAudio = document.getElementById('botAudio');
-    const statusEl = document.getElementById('status');
-    const statusText = document.getElementById('statusText');
+    const startBtn  = document.getElementById('startBtn');
+    const botAudio  = document.getElementById('botAudio');
+    const talkVideo = document.getElementById('talkVideo');
 
-    let pc = null;          // PeerConnection الحالي
-    let micStream = null;   // ستريم المايك الحالي
-    let audioCtx = null;    // AudioContext لمؤشر الكلام
-    let vadTimer = null;    // مؤقت فحص الصوت
-
-    function setStatus(text, mode) {
-      statusText.textContent = text;
-      statusEl.classList.remove('user', 'bot');
-      if (mode) statusEl.classList.add(mode);
-    }
-
+    // فتح الصوت على المتصفح
     async function unlockAudio() {
       try {
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        if (audioCtx.state === 'suspended') await audioCtx.resume();
-      } catch (_) { audioCtx = null; }
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        if (ctx.state === 'suspended') await ctx.resume();
+        return ctx;
+      } catch { return null; }
     }
 
-    function stopAll() {
-      try { if (vadTimer) clearInterval(vadTimer); vadTimer = null; } catch(_) {}
-      try { if (pc) pc.close(); } catch(_) {}
-      pc = null;
-      try { if (micStream) micStream.getTracks().forEach(t => t.stop()); } catch(_) {}
-      micStream = null;
-      setStatus('أوقِفت الجلسة. اضغطي "بدء المحادثة" للبدء', null);
-      startBtn.textContent = 'بدء المحادثة الصوتية';
-      startBtn.disabled = false;
+    // إظهار/إخفاء الفيديو بسلاسة
+    const showVideo = (show) => { talkVideo.style.opacity = show ? '1' : '0'; };
+
+    // فالس باك بسيط: معتمِد على أحداث <audio>
+    function fallbackMediaEvents() {
+      botAudio.addEventListener('playing', () => {
+        talkVideo.play().catch(()=>{});
+        showVideo(true);
+      });
+      const stop = () => {
+        showVideo(false);
+        talkVideo.pause();
+        talkVideo.currentTime = 0; // يرجع لأول إطار (شكل ثابت)
+      };
+      ['pause','ended','emptied','stalled','suspend'].forEach(ev => botAudio.addEventListener(ev, stop));
     }
 
-    async function startSession() {
+    // VAD بسيط عبر WebAudio لتحسين التوقيت
+    function setupVAD(audioCtx) {
+      if (!audioCtx) return fallbackMediaEvents();
+      try {
+        const src = audioCtx.createMediaElementSource(botAudio);
+        const an  = audioCtx.createAnalyser();
+        an.fftSize = 2048;
+        src.connect(an);
+        an.connect(audioCtx.destination);
+
+        const buf = new Uint8Array(an.fftSize);
+        let speaking=false, silentTicks=0, speakTicks=0;
+        const SILENT_TICKS_TO_HIDE = 6;  // ~6 فريمات سكون
+        const SPEAK_TICKS_TO_SHOW  = 2;  // فريمين صوت لإظهار الفيديو
+        const THRESHOLD            = 6;  // زوّديها إذا الصوت منخفض
+
+        function tick() {
+          an.getByteTimeDomainData(buf);
+          let sum=0; for (let i=0;i<buf.length;i++) sum += Math.abs(buf[i]-128);
+          const activity = sum / buf.length;
+
+          if (activity > THRESHOLD) {
+            speakTicks++; silentTicks=0;
+            if (!speaking && speakTicks >= SPEAK_TICKS_TO_SHOW) {
+              speaking = true;
+              talkVideo.play().catch(()=>{});
+              showVideo(true);
+            }
+          } else {
+            silentTicks++; speakTicks=0;
+            if (speaking && silentTicks >= SILENT_TICKS_TO_HIDE) {
+              speaking = false;
+              showVideo(false);
+              talkVideo.pause();
+              talkVideo.currentTime = 0;
+            }
+          }
+          requestAnimationFrame(tick);
+        }
+        requestAnimationFrame(tick);
+      } catch {
+        fallbackMediaEvents();
+      }
+    }
+
+    startBtn.addEventListener('click', async () => {
       startBtn.disabled = true;
-      setStatus('جاري التوصيل...', null);
-      await unlockAudio();
+      const audioCtx = await unlockAudio();
 
       try {
-        // 1) الحصول على التوكن من الباك-إند
-        const respTok = await fetch('/conversation-token');
-        const token = await respTok.text();
-        if (!token  token.startsWith('Missing')  token.startsWith('Failed')) {
-          alert('فشل جلب التوكن من السيرفر');
-          stopAll(); return;
-        }
+        // 1) تأسيس PeerConnection
+        const pc = new RTCPeerConnection({
+          iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }]
+        });
 
-        // 2) إنشاء اتصال WebRTC
-        pc = new RTCPeerConnection({ iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }] });
-
-        // 3) استلام صوت البوت إلى <audio>
+        // 2) صوت البوت -> <audio>
         const remoteStream = new MediaStream();
         pc.addEventListener('track', (e) => {
           remoteStream.addTrack(e.track);
           botAudio.srcObject = remoteStream;
           botAudio.muted = false;
+          botAudio.volume = 1.0;
           botAudio.play().catch(()=>{});
         });
 
-        // VAD مبسّط لصوت البوت → يبدّل التعليقات
-        if (audioCtx) {
-          const botSource = audioCtx.createMediaStreamSource(remoteStream);
-          const analyser = audioCtx.createAnalyser();
-          analyser.fftSize = 2048;
-          botSource.connect(analyser);
-          const buf = new Uint8Array(analyser.fftSize);
-          let speaking = false; const THRESH = 12; const EVERY = 120;
+        // 3) مايك المستخدم
+        const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mic.getTracks().forEach(t => pc.addTrack(t, mic));
 
-          vadTimer = setInterval(() => {
-            analyser.getByteTimeDomainData(buf);
-            let sum = 0; for (let i=0;i<buf.length;i++) sum += Math.abs(buf[i]-128);
-            const level = sum / buf.length;
-            if (!speaking && level > THRESH) { speaking = true; setStatus('يتكلم الآن…', 'bot'); }
-            else if (speaking && level <= THRESH) { speaking = false; setStatus('تكلم الآن', 'user'); }
-          }, EVERY);
-        }
-
-        // 4) إضافة صوت المستخدم
-        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        micStream.getTracks().forEach(t => pc.addTrack(t, micStream));
-        setStatus('تكلم الآن', 'user');
-
-        // 5) Offer → ElevenLabs (ضعي توكنك في /conversation-token بالباك-إند)
+        // 4) Offer وإرساله لـ ElevenLabs (Public Agent → بدون Authorization)
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
 
-        const resp = await fetch('https://api.elevenlabs.io/v1/convai/conversation/websocket/webrtc', {
-          method: 'POST',
-          headers: { 'Authorization': Bearer ${token}, 'Content-Type': 'application/sdp' },
-          body: offer.sdp
-        });
+        const resp = await fetch(
+          'https://api.elevenlabs.io/v1/convai/conversation/websocket/webrtc',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/sdp' }, // لا Authorization هنا
+            body: offer.sdp
+          }
+        );
 
         if (!resp.ok) {
           console.error(await resp.text());
-          alert('فشل تهيئة اتصال WebRTC مع المزود');
-          stopAll(); return;
+          alert('فشل تهيئة اتصال WebRTC مع ElevenLabs');
+          startBtn.disabled = false;
+          return;
         }
 
         const answerSdp = await resp.text();
         await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
 
-        // زر يتحول إلى "إيقاف"
-        startBtn.textContent = 'إيقاف المحادثة';
-        startBtn.disabled = false;
+        // 5) فعّلي كشف الكلام
+        setupVAD(audioCtx);
 
       } catch (err) {
         console.error(err);
         alert('صار خطأ في بدء الاتصال الصوتي');
-        stopAll();
-      }
-    }
-
-    // تبديل بدء/إيقاف
-    startBtn.addEventListener('click', async () => {
-      if (!pc) {
-        await startSession();
-      } else {
-        stopAll();
+        startBtn.disabled = false;
       }
     });
 
-    // تنظيف عند إغلاق/تحديث الصفحة
-    window.addEventListener('beforeunload', stopAll);
+    // منع سحب/لمس غير ضروري
+    document.addEventListener('dragstart', e => e.preventDefault());
   </script>
 </body>
 </html>
