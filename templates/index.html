@@ -17,12 +17,17 @@
       overflow:hidden;
     }
     button {
-      position:absolute;
-      bottom:20px;
-      z-index:10;
       padding:12px 18px;
       font-size:16px;
       cursor:pointer;
+      margin:6px;
+    }
+    .controls {
+      position:absolute;
+      bottom:20px;
+      display:flex;
+      gap:10px;
+      z-index:10;
     }
     img.bg, video.bg {
       position:absolute;
@@ -44,14 +49,22 @@
     <source src="{{ url_for('static', filename='roua.mp4') }}" type="video/mp4">
   </video>
 
-  <button id="startBtn">ابدأ المحادثة الصوتية</button>
+  <div class="controls">
+    <button id="startBtn">بدء المحادثة</button>
+    <button id="stopBtn" disabled>إيقاف المحادثة</button>
+  </div>
+
   <audio id="botAudio" autoplay playsinline></audio>
 
   <script>
     const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
     const botAudio = document.getElementById('botAudio');
     const bgImage = document.getElementById('bgImage');
     const bgVideo = document.getElementById('bgVideo');
+
+    let pc = null; // peer connection
+    let micStream = null;
 
     async function unlockAudio() {
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -60,65 +73,78 @@
 
     startBtn.addEventListener('click', async () => {
       startBtn.disabled = true;
+      stopBtn.disabled = false;
       await unlockAudio();
 
-      try {
-        const token = await fetch('/conversation-token').then(r => r.text());
-        if (!token  token.startsWith('Missing')  token.startsWith('Failed')) {
-          alert('فشل جلب التوكن من السيرفر');
-          startBtn.disabled = false; return;
-        }
-
-        const pc = new RTCPeerConnection({
-          iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }]
-        });
-
-        const remoteStream = new MediaStream();
-        pc.addEventListener('track', (e) => {
-          remoteStream.addTrack(e.track);
-          botAudio.srcObject = remoteStream;
-          botAudio.play();
-
-          // عند وجود صوت -> شغل الفيديو
-          botAudio.onplay = () => {
-            bgImage.style.display = "none";
-            bgVideo.style.display = "block";
-            bgVideo.play();
-          };
-          // عند التوقف -> رجع الصورة
-          botAudio.onpause = () => {
-            bgVideo.style.display = "none";
-            bgImage.style.display = "block";
-          };
-        });
-
-        const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mic.getTracks().forEach(t => pc.addTrack(t, mic));
-
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-
-        const resp = await fetch(
-          'https://api.elevenlabs.io/v1/convai/conversation/websocket/webrtc',
-          {
-            method: 'POST',
-            headers: { 'Authorization': Bearer ${token}, 'Content-Type': 'application/sdp' },
-            body: offer.sdp
-          }
-        );
-
-        if (!resp.ok) {
-          alert('فشل تهيئة اتصال WebRTC مع ElevenLabs');
-          startBtn.disabled = false; return;
-        }
-
-        const answerSdp = await resp.text();
-        await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
-
-      } catch (err) {
-        alert('صار خطأ في بدء الاتصال الصوتي');
-        startBtn.disabled = false;
+      const token = await fetch('/conversation-token').then(r => r.text());
+      if (!token  token.startsWith('Missing')  token.startsWith('Failed')) {
+        alert('فشل جلب التوكن من السيرفر');
+        startBtn.disabled = false; stopBtn.disabled = true;
+        return;
       }
+
+      pc = new RTCPeerConnection({
+        iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }]
+      });
+
+      const remoteStream = new MediaStream();
+      pc.addEventListener('track', (e) => {
+        remoteStream.addTrack(e.track);
+        botAudio.srcObject = remoteStream;
+        botAudio.play();
+
+        botAudio.onplay = () => {
+          bgImage.style.display = "none";
+          bgVideo.style.display = "block";
+          bgVideo.play();
+        };
+        botAudio.onpause = () => {
+          bgVideo.style.display = "none";
+          bgImage.style.display = "block";
+        };
+      });
+
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      micStream.getTracks().forEach(t => pc.addTrack(t, micStream));
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      const resp = await fetch(
+        'https://api.elevenlabs.io/v1/convai/conversation/websocket/webrtc',
+        {
+          method: 'POST',
+          headers: { 'Authorization': Bearer ${token}, 'Content-Type': 'application/sdp' },
+          body: offer.sdp
+        }
+      );
+
+      if (!resp.ok) {
+        alert('فشل تهيئة اتصال WebRTC مع ElevenLabs');
+        startBtn.disabled = false; stopBtn.disabled = true;
+        return;
+      }
+
+      const answerSdp = await resp.text();
+      await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+    });
+
+    stopBtn.addEventListener('click', () => {
+      if (pc) {
+        pc.close();
+        pc = null;
+      }
+      if (micStream) {
+        micStream.getTracks().forEach(track => track.stop());
+        micStream = null;
+      }
+
+      botAudio.srcObject = null;
+      bgVideo.pause();
+      bgVideo.style.display = "none";
+      bgImage.style.display = "block";
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
     });
   </script>
 </body>
