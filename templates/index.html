@@ -1,114 +1,135 @@
 <!DOCTYPE html>
 <html lang="ar">
 <head>
-  <meta charset="UTF-8" />
-  <title>واجهة رؤى</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>
-    body {
-      margin: 0;
-      background: #000;
-      height: 100vh;
-      width: 100vw;
-      overflow: hidden;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-direction: column;
-    }
-    img.bg {
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      user-select: none;
-      -webkit-user-drag: none;
-      pointer-events: none;
-    }
-    button {
-      position: relative;
-      z-index: 2;
-      padding: 16px 24px;
-      font-size: 18px;
-      cursor: pointer;
-      background: #fff;
-      border: none;
-      border-radius: 8px;
-    }
-  </style>
+<meta charset="UTF-8">
+<title>واجهة رؤى</title>
+<style>
+  body{
+    margin:0;background:#000;display:flex;justify-content:center;align-items:center;
+    height:100vh;flex-direction:column;gap:16px;overflow:hidden
+  }
+  /* الخلفية (صورة/فيديو) تغطي الشاشة بالكامل */
+  .bg{
+    position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;user-select:none;
+    -webkit-user-drag:none;pointer-events:none;background:#000
+  }
+  /* نخلي زرّين والتحكم ظاهرين فوق الخلفية */
+  .controls{position:relative;z-index:2;display:flex;gap:12px}
+  button{padding:10px 18px;border:0;border-radius:8px;cursor:pointer}
+  #status{position:relative;z-index:2;color:#9eea9e;font-family:system-ui,Arial,sans-serif}
+</style>
 </head>
 <body>
-  <img src="{{ url_for('static', filename='roua.jpg') }}" class="bg" alt="Roa Background" />
-  <button id="startBtn">ابدأ المحادثة الصوتية</button>
+  <!-- الصورة الافتراضية -->
+  <img src="{{ url_for('static', filename='roua.jpg') }}" id="bgImg" class="bg" alt="Roa Background">
 
-  <audio id="botAudio" autoplay playsinline></audio>
+  <!-- الفيديو الذي يظهر أثناء كلام البوت -->
+  <video id="rouaVideo"
+         class="bg"
+         src="{{ url_for('static', filename='roua.MP4') }}"
+         preload="auto"
+         muted
+         playsinline
+         loop
+         style="display:none"></video>
 
-  <script>
-    const startBtn = document.getElementById('startBtn');
-    const botAudio = document.getElementById('botAudio');
+  <div class="controls">
+    <button id="start">بدء المحادثة</button>
+    <button id="stop" disabled>إيقاف</button>
+  </div>
+  <div id="status"></div>
 
-    async function unlockAudio() {
-      try {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        if (ctx.state === 'suspended') await ctx.resume();
-      } catch (_) {}
+  <!-- صوت الخرج من البوت -->
+  <audio id="agent-audio" autoplay playsinline></audio>
+
+  <script type="module">
+    // نستورد عميل ElevenLabs (يدعم WebRTC/WebSocket). هذا مسار ESM من jsdelivr.
+    import { Conversation } from "https://cdn.jsdelivr.net/npm/@elevenlabs/client@0.5.0/+esm";
+
+    const startBtn = document.getElementById('start');
+    const stopBtn  = document.getElementById('stop');
+    const statusEl = document.getElementById('status');
+    const bgImg    = document.getElementById('bgImg');
+    const vid      = document.getElementById('rouaVideo');
+
+    let convo = null;
+
+    function setStatus(t){ statusEl.textContent = t; }
+
+    function showVideo(){
+      if (bgImg) bgImg.style.display = 'none';
+      if (vid){
+        vid.style.display = 'block';
+        // نضمن التشغيل فورًا (ميوت لتفادي قيود المتصفح)
+        vid.play().catch(()=>{});
+      }
     }
 
-    startBtn.addEventListener('click', async () => {
-      startBtn.disabled = true;
-      await unlockAudio();
-
-      try {
-        const token = await fetch('/conversation-token').then(r => r.text());
-        if (!token  token.startsWith('Missing')  token.startsWith('Failed')) {
-          alert('فشل جلب التوكن من السيرفر'); startBtn.disabled = false; return;
-        }
-
-        const pc = new RTCPeerConnection({
-          iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }]
-        });
-
-        const remoteStream = new MediaStream();
-        pc.addEventListener('track', (e) => {
-          remoteStream.addTrack(e.track);
-          botAudio.srcObject = remoteStream;
-          botAudio.muted = false;
-          botAudio.volume = 1.0;
-          botAudio.play().catch(()=>{});
-        });
-
-        const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mic.getTracks().forEach(t => pc.addTrack(t, mic));
-
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-
-        const resp = await fetch(
-          'https://api.elevenlabs.io/v1/convai/conversation/websocket/webrtc',
-          {
-            method: 'POST',
-            headers: { 'Authorization': Bearer ${token}, 'Content-Type': 'application/sdp' },
-            body: offer.sdp
-          }
-        );
-
-        if (!resp.ok) {
-          console.error(await resp.text());
-          alert('فشل تهيئة اتصال WebRTC مع ElevenLabs');
-          startBtn.disabled = false; return;
-        }
-
-        const answerSdp = await resp.text();
-        await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
-
-      } catch (err) {
-        console.error(err);
-        alert('صار خطأ في بدء الاتصال الصوتي');
-        startBtn.disabled = false;
+    function showImage(){
+      if (vid){
+        vid.pause();
+        vid.currentTime = 0;
+        vid.style.display = 'none';
       }
-    });
+      if (bgImg) bgImg.style.display = 'block';
+    }
+
+    async function start() {
+      try {
+        setStatus('نجهّز المايك…');
+        await navigator.mediaDevices.getUserMedia({ audio: true });
+
+        setStatus('نجيب توكن الجلسة…');
+        const tokenRes = await fetch('/conversation-token');
+        if (!tokenRes.ok) throw new Error('فشل جلب التوكن');
+        const conversationToken = await tokenRes.text();
+
+        setStatus('نبدأ الجلسة مع رؤى…');
+        convo = await Conversation.startSession({
+          conversationToken,
+          connectionType: "webrtc",   // مباشر
+          onConnect: () => setStatus('متصلة — تكلم معها الآن ✨'),
+          onDisconnect: () => { setStatus('انتهت الجلسة'); showImage(); },
+          onError: (e) => setStatus(`خطأ: ${e?.message || e}`),
+
+          // يبدأ كلام البوت -> شغّل الفيديو
+          onAgentResponseStart: () => { showVideo(); },
+
+          // انتهى كلام البوت/سكت -> ارجع للصورة
+          onAgentResponseStop: () => { showImage(); },
+
+          onMessage: (m) => {
+            // تراك النصوص (اختياري)
+            // console.log('msg', m);
+          },
+        });
+
+        // افتراضيًا نعرض الصورة
+        showImage();
+
+        startBtn.disabled = true;
+        stopBtn.disabled  = false;
+      } catch (err) {
+        setStatus(`خطأ: ${err?.message || err}`);
+      }
+    }
+
+    async function stop() {
+      try {
+        if (convo) {
+          await convo.endSession();
+          convo = null;
+        }
+      } finally {
+        startBtn.disabled = false;
+        stopBtn.disabled  = true;
+        showImage();
+        setStatus('أوقفت الجلسة.');
+      }
+    }
+
+    startBtn.addEventListener('click', start);
+    stopBtn.addEventListener('click', stop);
   </script>
 </body>
 </html>
