@@ -5,136 +5,110 @@
   <title>واجهة رؤى</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    html,body{margin:0;height:100%;background:#000;overflow:hidden}
-    /* خلفية فل سكرين: صورة + فيديو نفس القص */
-    .media{position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;object-position:center;
-           -webkit-user-drag:none;user-select:none;pointer-events:none;transition:opacity 160ms linear}
-    #bgImg{opacity:1;z-index:0}
-    #bgVid{opacity:0;z-index:1}
-    /* أزرار التحكم */
-    .controls{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);display:flex;gap:10px;z-index:10}
-    button{padding:12px 18px;font-size:16px;border:0;border-radius:10px;cursor:pointer;background:#0a84ff;color:#fff}
-    button:disabled{opacity:.6;cursor:default}
+    body {
+      margin: 0;
+      background: #000;
+      height: 100vh;
+      width: 100vw;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+    }
+    img.bg {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      user-select: none;
+      -webkit-user-drag: none;
+      pointer-events: none;
+    }
+    button {
+      position: relative;
+      z-index: 2;
+      padding: 16px 24px;
+      font-size: 18px;
+      cursor: pointer;
+      background: #fff;
+      border: none;
+      border-radius: 8px;
+    }
   </style>
 </head>
 <body>
-  <!-- خلفية -->
-  <img id="bgImg" class="media" src="{{ url_for('static', filename='roua.jpg') }}" alt="bg">
-  <video id="bgVid" class="media" muted playsinline preload="auto" loop>
-    <source src="{{ url_for('static', filename='roua_blink.mp4') }}" type="video/mp4">
-  </video>
+  <img src="{{ url_for('static', filename='roua.jpg') }}" class="bg" alt="Roa Background" />
+  <button id="startBtn">ابدأ المحادثة الصوتية</button>
 
-  <div class="controls">
-    <button id="startBtn">بدء المحادثة</button>
-    <button id="stopBtn" disabled>إيقاف المحادثة</button>
-  </div>
-
-  <!-- صوت البوت -->
   <audio id="botAudio" autoplay playsinline></audio>
 
   <script>
-    // عناصر
     const startBtn = document.getElementById('startBtn');
-    const stopBtn  = document.getElementById('stopBtn');
     const botAudio = document.getElementById('botAudio');
-    const bgImg    = document.getElementById('bgImg');
-    const bgVid    = document.getElementById('bgVid');
 
-    // حالة اتصال
-    let pc = null;
-    let mic = null;
-
-    // فلّ سكرين فيديو أثناء الكلام
-    function showVideo(on){
-      bgVid.style.opacity = on ? '1' : '0';
-      if(on){ bgVid.currentTime = 0; bgVid.play().catch(()=>{}); }
-      else  { bgVid.pause(); bgVid.currentTime = 0; }
-    }
-    botAudio.addEventListener('playing', ()=> showVideo(true));
-    ['pause','ended','emptied','stalled','suspend'].forEach(ev=> botAudio.addEventListener(ev, ()=> showVideo(false)));
-
-    // فتح AudioContext للمتصفح
-    function unlockAudio(){
-      const AC = window.AudioContext || window.webkitAudioContext;
-      if(!AC) return;
-      const ctx = new AC();
-      if (ctx.state === 'suspended') ctx.resume();
+    async function unlockAudio() {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        if (ctx.state === 'suspended') await ctx.resume();
+      } catch (_) {}
     }
 
-    // إنشاء اتصال WebRTC (بوضع توكن أو بدون)
-    async function initPeer({ token }){
-      pc = new RTCPeerConnection({ iceServers:[{ urls:['stun:stun.l.google.com:19302'] }] });
+    startBtn.addEventListener('click', async () => {
+      startBtn.disabled = true;
+      await unlockAudio();
 
-      // ستريم صوت البوت للـ <audio>
-      const remote = new MediaStream();
-      pc.addEventListener('track', (e)=>{
-        if (e.track.kind === 'audio') {
-          remote.addTrack(e.track);
-          botAudio.srcObject = remote;
+      try {
+        const token = await fetch('/conversation-token').then(r => r.text());
+        if (!token  token.startsWith('Missing')  token.startsWith('Failed')) {
+          alert('فشل جلب التوكن من السيرفر'); startBtn.disabled = false; return;
+        }
+
+        const pc = new RTCPeerConnection({
+          iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }]
+        });
+
+        const remoteStream = new MediaStream();
+        pc.addEventListener('track', (e) => {
+          remoteStream.addTrack(e.track);
+          botAudio.srcObject = remoteStream;
           botAudio.muted = false;
           botAudio.volume = 1.0;
           botAudio.play().catch(()=>{});
+        });
+
+        const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mic.getTracks().forEach(t => pc.addTrack(t, mic));
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        const resp = await fetch(
+          'https://api.elevenlabs.io/v1/convai/conversation/websocket/webrtc',
+          {
+            method: 'POST',
+            headers: { 'Authorization': Bearer ${token}, 'Content-Type': 'application/sdp' },
+            body: offer.sdp
+          }
+        );
+
+        if (!resp.ok) {
+          console.error(await resp.text());
+          alert('فشل تهيئة اتصال WebRTC مع ElevenLabs');
+          startBtn.disabled = false; return;
         }
-      });
 
-      // مايك المستخدم
-      mic = await navigator.mediaDevices.getUserMedia({ audio:true });
-      mic.getTracks().forEach(t => pc.addTrack(t, mic));
+        const answerSdp = await resp.text();
+        await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
 
-      // تفاوض
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-
-      const headers = { 'Content-Type': 'application/sdp' };
-      if (token) headers['Authorization'] = Bearer ${token};
-
-      const resp = await fetch('https://api.elevenlabs.io/v1/convai/conversation/websocket/webrtc', {
-        method:'POST', headers, body: offer.sdp
-      });
-
-      const answer = await resp.text();
-      if (!resp.ok) {
-        // فشل بهذا الوضع
-        return { ok:false, status:resp.status, body:answer };
+      } catch (err) {
+        console.error(err);
+        alert('صار خطأ في بدء الاتصال الصوتي');
+        startBtn.disabled = false;
       }
-      await pc.setRemoteDescription({ type:'answer', sdp: answer });
-      return { ok:true };
-    }
-
-    async function startConversation(){
-      startBtn.disabled = true; stopBtn.disabled = false; unlockAudio();
-
-      // 1) جرّب بوضع "توكن" من السيرفر
-      const tokenResp = await fetch('/conversation-token', { cache:'no-store' });
-      const token = await tokenResp.text();
-
-      if (tokenResp.ok && token && !token.
-      startsWith('Missing') && !token.startsWith('Failed')) {
-        const r1 = await initPeer({ token });
-        if (r1.ok) return; // اشتغل
-      }
-
-      // 2) فشل/مافي توكن → جرّب وضع "Public" بدون Authorization
-      const r2 = await initPeer({ token:null });
-      if (r2.ok) return;
-
-      // 3) لو فشل الاثنين
-      alert('تعذر بدء الاتصال (توكن/عام). تحقق من إعدادات Agent والتوكن.');
-      startBtn.disabled = false; stopBtn.disabled = true;
-    }
-
-    function stopConversation(){
-      if (pc) { pc.close(); pc = null; }
-      if (mic) { mic.getTracks().forEach(t=>t.stop()); mic = null; }
-      botAudio.srcObject = null;
-      showVideo(false);
-      startBtn.disabled = false;
-      stopBtn.disabled = true;
-    }
-
-    // أحداث الأزرار
-    startBtn.addEventListener('click', startConversation);
-    stopBtn .addEventListener('click', stopConversation);
+    });
   </script>
 </body>
 </html>
