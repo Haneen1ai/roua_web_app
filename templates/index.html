@@ -8,6 +8,7 @@
     margin:0;background:#000;display:flex;justify-content:center;align-items:center;
     height:100vh;flex-direction:column;gap:16px;overflow:hidden
   }
+  /* الخلفية فل سكرين */
   .bg{
     position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;user-select:none;
     -webkit-user-drag:none;pointer-events:none;background:#000
@@ -21,13 +22,14 @@
   <!-- الصورة الافتراضية -->
   <img src="{{ url_for('static', filename='roua.jpg') }}" id="bgImg" class="bg" alt="Roa Background">
 
-  <!-- الفيديو أثناء كلام البوت -->
+  <!-- الفيديو كخلفية (ما يشتغل إلا عند الضغط على بدء) -->
   <video id="rouaVideo"
          class="bg"
          src="{{ url_for('static', filename='roua.MP4') }}"
          autoplay
          muted
          playsinline
+         preload="auto"
          loop
          style="display:none"></video>
 
@@ -66,17 +68,10 @@
       bgImg.style.display = 'block';
     }
 
-    function wireAudioEvents(){
-      agentAudio.addEventListener('playing', showVideo);
-      ['pause','ended','waiting','stalled','suspend','emptied'].forEach(ev=>{
-        agentAudio.addEventListener(ev, showImage);
-      });
-    }
-
     async function start() {
       try {
         setStatus('نجهّز المايك…');
-        const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+        await navigator.mediaDevices.getUserMedia({ audio: true });
 
         setStatus('نجيب توكن الجلسة…');
         const tokenRes = await fetch('/conversation-token');
@@ -92,6 +87,7 @@
           onError: (e) => setStatus(`خطأ: ${e?.message || e}`),
         });
 
+        // اربطي صوت الإيجنت على <audio>
         const remoteStream =
           (convo.getRemoteMediaStream && convo.getRemoteMediaStream()) ||
           (convo.getRemoteStream && convo.getRemoteStream()) || null;
@@ -101,8 +97,8 @@
           await agentAudio.play().catch(()=>{});
         }
 
-        wireAudioEvents();
-        showImage();
+        // تشغيل الفيديو كخلفية عند بدء الجلسة (حسب طلبك)
+        showVideo();
 
         startBtn.disabled = true;
         stopBtn.disabled  = false;
@@ -118,12 +114,16 @@
           convo = null;
         }
       } finally {
+        // أوقف الفيديو وارجع للصورة
+        showImage();
         startBtn.disabled = false;
         stopBtn.disabled  = true;
-        showImage();
         setStatus('أوقفت الجلسة.');
       }
     }
+
+    // الحالة الافتراضية: صورة ثابتة
+    showImage();
 
     startBtn.addEventListener('click', start);
     stopBtn.addEventListener('click', stop);
