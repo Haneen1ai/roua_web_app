@@ -1,168 +1,54 @@
 <!DOCTYPE html>
 <html lang="ar">
 <head>
-  <meta charset="UTF-8" />
-  <title>واجهة رؤى</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>
-    :root { --fade-ms: 160; }
-    html, body { margin:0; height:100%; background:#000; }
-    * { box-sizing: border-box; }
-
-    .stage{
-      position:relative; width:100vw; height:100vh; overflow:hidden;
-      user-select:none; -webkit-user-select:none; touch-action:none;
-    }
-    /* الصورة + الفيديو نفس الأبعاد بالملّي */
-    .media{
-      position:absolute; inset:0; width:100vw; height:100vh;
-      object-fit:cover; object-position:center;
-      -webkit-user-drag:none; pointer-events:none;
-      transition:opacity var(--fade-ms) linear;
-    }
-    .bg{opacity:1} .talk{opacity:0}
-
-    .controls{
-      position:absolute; z-index:10; left:50%; bottom:4vh; transform:translateX(-50%);
-      display:flex; gap:12px;
-    }
-    button{
-      padding:12px 18px; font-size:16px; border:0; border-radius:10px;
-      cursor:pointer; background:#0a84ff; color:#fff;
-    }
-    button:disabled{opacity:.6; cursor:default}
-  </style>
+  <meta charset="UTF-8">
+  <title>Voice Bot</title>
 </head>
 <body>
-  <div class="stage" id="stage">
-    <!-- صورة الخلفية فل سكرين -->
-    <img src="{{ url_for('static', filename='roua.jpg') }}" class="media bg" alt="Roa Background" draggable="false"/>
-
-    <!-- فيديو 1s blink (نفس الأبعاد) -->
-    <video id="talkVideo" class="media talk"
-      src="{{ url_for('static', filename='roua_blink.mp4') }}"
-      muted playsinline preload="auto" loop tabindex="-1"></video>
-
-    <!-- زرّك كما هو -->
-    <div class="controls">
-      <button id="startBtn">ابدأ المحادثة الصوتية</button>
-    </div>
-  </div>
-
-  <!-- مسار صوت البوت -->
-  <audio id="botAudio" autoplay playsinline></audio>
+  <button id="startBtn">ابدأ</button>
+  <audio id="botAudio" autoplay></audio>
+  <video id="botVideo" width="400" style="display:none;" loop>
+    <source src="video.mp4" type="video/mp4">
+  </video>
 
   <script>
-    const startBtn  = document.getElementById('startBtn');
-    const botAudio  = document.getElementById('botAudio');
-    const talkVideo = document.getElementById('talkVideo');
+    const startBtn = document.getElementById("startBtn");
+    const botAudio = document.getElementById("botAudio");
+    const botVideo = document.getElementById("botVideo");
 
-    const showVideo = (show)=> talkVideo.style.opacity = show ? '1' : '0';
-
-    // fallback بسيط يعتمد على أحداث <audio>
-    function fallbackMediaEvents(){
-      botAudio.addEventListener('playing', ()=>{ talkVideo.play().catch(()=>{}); showVideo(true); });
-      const stop = ()=>{ showVideo(false); talkVideo.pause(); talkVideo.currentTime = 0; };
-      ['pause','ended','emptied','stalled','suspend'].forEach(ev=> botAudio.addEventListener(ev, stop));
-    }
-
-    // VAD خفيف لتحسين التبديل
-    function setupVAD(audioCtx){
-      if(!audioCtx){ fallbackMediaEvents(); return; }
-      try{
-        const src = audioCtx.createMediaElementSource(botAudio);
-        const an  = audioCtx.createAnalyser(); an.fftSize = 2048;
-        src.connect(an); an.connect(audioCtx.destination);
-
-        const buf = new Uint8Array(an.fftSize);
-        let speaking=false, silent=0, speak=0;
-        const HIDE=6, SHOW=2, TH=6;
-
-        function tick(){
-          an.getByteTimeDomainData(buf);
-          let s=0; for(let i=0;i<buf.length;i++) s += Math.abs(buf[i]-128);
-          const act = s / buf.length;
-
-          if(act>TH){ speak++; silent=0;
-            if(!speaking && speak>=SHOW){ speaking=true; talkVideo.play().catch(()=>{}); showVideo(true); }
-          }else{ silent++; speak=0;
-            if(speaking && silent>=HIDE){ speaking=false; showVideo(false); talkVideo.pause(); talkVideo.currentTime=0; }
-          }
-          requestAnimationFrame(tick);
-        }
-        requestAnimationFrame(tick);
-      }catch{ fallbackMediaEvents(); }
-    }
-
-    async function unlockAudio(){
-      try{
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        if(ctx.state==='suspended') await ctx.resume();
-        return ctx;
-      }catch{ return null; }
-    }
-
-    startBtn.addEventListener('click', async ()=>{
+    startBtn.onclick = async () => {
       startBtn.disabled = true;
-      const audioCtx = await unlockAudio();
 
-      try{
-        // ✅ نفس منطقك القديم: نجلب توكن من الباك-إند
-        const token = await fetch('/conversation-token', { cache:'no-store' }).then(r=>r.text());
-        if(!token  token.startsWith('Missing')  token.startsWith('Failed')){
-          alert('فشل جلب التوكن من السيرفر'); startBtn.disabled=false; return;
-        }
-
-        // 1) WebRTC Peer
-        const pc = new RTCPeerConnection({ iceServers:[{ urls:['stun:stun.l.google.com:19302'] }] });
-
-        // 2) صوت البوت -> <audio>
-        const remote = new MediaStream();
-        pc.addEventListener('track', (e)=>{
-          remote.addTrack(e.track);
-          botAudio.srcObject = remote;
-          botAudio.muted = false;
-          botAudio.volume = 1.0;
-          botAudio.play().catch(()=>{});
-        });
-
-        // 3) مايك المستخدم
-        const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mic.getTracks().forEach(t=> pc.addTrack(t, mic));
-
-        // 4) Offer + إرسال بـ Authorization (زي القديم)
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-
-        const resp = await fetch('https://api.elevenlabs.io/v1/convai/conversation/websocket/webrtc',{
-          method:'POST',
-          headers:{
-            'Authorization': Bearer ${token},   // ← نفس طريقة القديم
-            'Content-Type': 'application/sdp'
-          },
-          body: offer.sdp
-        });
-
-        const text = await resp.text();
-        if(!resp.ok){
-          console.error('WebRTC init failed', resp.status, text);
-          alert(`فشل تهيئة اتصال WebRTC مع ElevenLabs\nStatus: ${resp.status}\n${text.slice(0,300)}`);
-          startBtn.disabled=false; return;
-        }
-
-        await pc.setRemoteDescription({ type:'answer', sdp:text });
-
-        // 5) فعّل كشف الكلام
-        setupVAD(audioCtx);
-
-      }catch(err){
-        console.error(err);
-        alert('صار خطأ في بدء الاتصال الصوتي');
+      // 1) جلب التوكن
+      const resp = await fetch('/conversation-token', { cache: 'no-store' });
+      const token = await resp.text();
+      if (!token  token.startsWith("Missing")  token.startsWith("Failed")) {
+        alert("فشل جلب التوكن من السيرفر");
         startBtn.disabled = false;
+        return;
       }
-    });
 
-    document.addEventListener('dragstart', e=> e.preventDefault());
+      // 2) تاسيس اتصال WebRTC
+      const pc = new RTCPeerConnection({
+        iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }]
+      });
+
+      const remoteStream = new MediaStream();
+      botAudio.srcObject = remoteStream;
+
+      pc.ontrack = (event) => {
+        event.streams[0].getTracks().forEach(track => {
+          remoteStream.addTrack(track);
+        });
+      };
+
+      // 3) الفيديو يشتغل مع الصوت
+      botAudio.onplay = () => { botVideo.style.display = "block"; botVideo.play(); };
+      botAudio.onpause = () => { botVideo.pause(); botVideo.style.display = "none"; };
+      botAudio.onended = () => { botVideo.pause(); botVideo.style.display = "none"; };
+
+      // باقي كود الـ offer/answer حسب سيرفرك...
+    };
   </script>
 </body>
 </html>
