@@ -4,34 +4,35 @@
 <meta charset="UTF-8">
 <title>واجهة رؤى</title>
 <style>
+  /* صفحة سوداء، بدون سكرول، محاذاة للأزرار */
+  html, body { height:100%; }
   body{
     margin:0;background:#000;display:flex;justify-content:center;align-items:center;
     height:100vh;flex-direction:column;gap:16px;overflow:hidden
   }
-  /* الخلفية فل سكرين */
+
+  /* الخلفية فل سكرين على أي شاشة */
   .bg{
-    position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;user-select:none;
-    -webkit-user-drag:none;pointer-events:none;background:#000
+    position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;
+    user-select:none;-webkit-user-drag:none;pointer-events:none;background:#000
   }
+
+  /* واجهة التحكم فوق الخلفية */
   .controls{position:relative;z-index:2;display:flex;gap:12px}
   button{padding:10px 18px;border:0;border-radius:8px;cursor:pointer}
   #status{position:relative;z-index:2;color:#9eea9e;font-family:system-ui,Arial,sans-serif}
 </style>
 </head>
 <body>
-  <!-- الصورة الافتراضية -->
+  <!-- صورة كـ Fallback لو الفيديو ما اشتغل -->
   <img src="{{ url_for('static', filename='roua.jpg') }}" id="bgImg" class="bg" alt="Roa Background">
 
-  <!-- الفيديو كخلفية (ما يشتغل إلا عند الضغط على بدء) -->
-  <video id="rouaVideo"
+  <!-- الفيديو الخلفية (Idle) — فل سكرين وLoop -->
+  <video id="idleVideo"
          class="bg"
          src="{{ url_for('static', filename='roua.MP4') }}"
-         autoplay
-         muted
-         playsinline
-         preload="auto"
-         loop
-         style="display:none"></video>
+         autoplay muted playsinline preload="auto" loop
+         style="display:block"></video>
 
   <div class="controls">
     <button id="start">بدء المحادثة</button>
@@ -39,7 +40,7 @@
   </div>
   <div id="status"></div>
 
-  <!-- صوت البوت -->
+  <!-- صوت البوت (منفصل عن الفيديو) -->
   <audio id="agent-audio" autoplay playsinline></audio>
 
   <script type="module">
@@ -49,24 +50,15 @@
     const stopBtn    = document.getElementById('stop');
     const statusEl   = document.getElementById('status');
     const bgImg      = document.getElementById('bgImg');
-    const vid        = document.getElementById('rouaVideo');
+    const idleVideo  = document.getElementById('idleVideo');
     const agentAudio = document.getElementById('agent-audio');
 
     let convo = null;
+    const setStatus = (t)=> statusEl.textContent = t;
 
-    function setStatus(t){ statusEl.textContent = t; }
-
-    function showVideo(){
-      bgImg.style.display = 'none';
-      vid.style.display = 'block';
-      vid.play().catch(()=>{});
-    }
-    function showImage(){
-      vid.pause();
-      vid.currentTime = 0;
-      vid.style.display = 'none';
-      bgImg.style.display = 'block';
-    }
+    /* إذا الفيديو جاهز نخفي الصورة؛ لو فشل نرجّع الصورة */
+    idleVideo.addEventListener('canplay', ()=> { bgImg.style.display = 'none'; });
+    idleVideo.addEventListener('error',   ()=> { bgImg.style.display = 'block'; });
 
     async function start() {
       try {
@@ -82,12 +74,11 @@
         convo = await Conversation.startSession({
           conversationToken,
           connectionType: "webrtc",
-          onConnect: () => setStatus('متصلة — تكلمي معها الآن ✨'),
-          onDisconnect: () => { setStatus('انتهت الجلسة'); showImage(); },
+          onConnect: () => setStatus('متصلة — تكلم معها الآن ✨'),
+          onDisconnect: () => setStatus('انتهت الجلسة'),
           onError: (e) => setStatus(`خطأ: ${e?.message || e}`),
         });
 
-        // اربطي صوت الإيجنت على <audio>
         const remoteStream =
           (convo.getRemoteMediaStream && convo.getRemoteMediaStream()) ||
           (convo.getRemoteStream && convo.getRemoteStream()) || null;
@@ -96,9 +87,6 @@
           agentAudio.srcObject = remoteStream;
           await agentAudio.play().catch(()=>{});
         }
-
-        // تشغيل الفيديو كخلفية عند بدء الجلسة (حسب طلبك)
-        showVideo();
 
         startBtn.disabled = true;
         stopBtn.disabled  = false;
@@ -109,21 +97,13 @@
 
     async function stop() {
       try {
-        if (convo) {
-          await convo.endSession();
-          convo = null;
-        }
+        if (convo) { await convo.endSession(); convo = null; }
       } finally {
-        // أوقف الفيديو وارجع للصورة
-        showImage();
         startBtn.disabled = false;
         stopBtn.disabled  = true;
         setStatus('أوقفت الجلسة.');
       }
     }
-
-    // الحالة الافتراضية: صورة ثابتة
-    showImage();
 
     startBtn.addEventListener('click', start);
     stopBtn.addEventListener('click', stop);
