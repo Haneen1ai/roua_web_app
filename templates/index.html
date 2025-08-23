@@ -69,7 +69,7 @@
         convo = await Conversation.startSession({
           conversationToken,
           connectionType: "webrtc",
-          onConnect: () => setStatus('متصلة — تكلمي معها الآن ✨'),
+          onConnect: () => setStatus('متصلة — تكلم معها الآن ✨'),
           onDisconnect: () => setStatus('انتهت الجلسة'),
           onError: (e) => setStatus(`خطأ: ${e?.message || e}`),
         });
