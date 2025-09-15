@@ -17,9 +17,26 @@
     user-select:none;-webkit-user-drag:none;pointer-events:none;
     background:#000;
   }
-  .controls{position:relative;z-index:2;display:flex;gap:12px}
+  .controls{
+    position:fixed;              /* تثبيت في الأسفل */
+    bottom:20px;                 /* مسافة من أسفل الشاشة */
+    left:50%;transform:translateX(-50%);
+    z-index:2;display:flex;gap:12px
+  }
   button{padding:10px 18px;border:0;border-radius:8px;cursor:pointer}
-  #status{position:relative;z-index:2;color:#9eea9e;font-family:system-ui,Arial,sans-serif}
+  button#start { 
+    background:#0D2C54;  /* أزرق غامق */
+    color:#fff; 
+  }
+  button#stop { 
+    background:#dc3545;  /* أحمر */
+    color:#fff; 
+  }
+  #status{
+    position:relative;z-index:2;
+    color:#3399ff;  /* أزرق فاتح */
+    font-family:system-ui,Arial,sans-serif
+  }
 </style>
 </head>
 <body>

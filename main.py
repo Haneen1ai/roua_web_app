@@ -10,7 +10,7 @@ from elevenlabs.conversational_ai.default_audio_interface import DefaultAudioInt
 
 # ⬇️ إضافة بسيطة: بنحتاج requests عشان نجيب توكن WebRTC من ElevenLabs
 import requests
-from flask import jsonify  # لو حبيتي ترجّعين JSON، بس بنرجّع نص التوكن
+from flask import jsonify  # JSON، بس بنرجّع نص التوكن
 
 # إعداد Flask
 app = Flask(__name__)
@@ -77,4 +77,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-    
