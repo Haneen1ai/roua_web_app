@@ -78,7 +78,6 @@ def main():
         client,
         AGENT_ID,
         requires_auth=bool(API_KEY),
-        audio_interface=DefaultAudioInterface(),
         callback_agent_response=on_agent_response,
         callback_agent_response_correction=on_correction,
         callback_user_transcript=on_user_transcript
