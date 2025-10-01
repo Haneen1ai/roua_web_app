@@ -59,13 +59,13 @@ def main():
 
     client = ElevenLabs(api_key=API_KEY)
 
+    # هنا أضفنا واجهة الصوت الافتراضية الجديدة
+    audio_interface = DefaultAudioInterface()
+
     # دوال الكولباك
     def on_agent_response(response):
         print(f"\n🟢 Agent: {response}")
-        # البوت بدأ يتكلم -> أرسل إشارة للواجهة تشغل فيديو talking
         socketio.emit("switch_video", {"status": "talking"})
-        # هنا تقدرين تضيفين تايمر على حسب طول الصوت إذا عندك المدة
-        # مؤقتاً نخليها 5 ثواني كاختبار
         threading.Thread(target=lambda: (time.sleep(5), socketio.emit("switch_video", {"status": "silent"}))).start()
 
     def on_correction(original, corrected):
@@ -74,10 +74,12 @@ def main():
     def on_user_transcript(transcript):
         print(f"\n🎤 You: {transcript}")
 
+    # هنا عدلنا استدعاء Conversation ليشمل audio_interface
     conversation = Conversation(
         client,
         AGENT_ID,
         requires_auth=bool(API_KEY),
+        audio_interface=audio_interface,  # ← هذا الجديد
         callback_agent_response=on_agent_response,
         callback_agent_response_correction=on_correction,
         callback_user_transcript=on_user_transcript
