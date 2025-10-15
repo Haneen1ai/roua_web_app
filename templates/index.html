@@ -2,139 +2,128 @@
 <html lang="ar">
 <head>
 <meta charset="UTF-8">
-<title>مساعدك الصوتي</title>
+<title>واجهة رؤى</title>
 <style>
-  body {
-    margin: 0;
-    background-color: #001633; /* كحلي غامق */
-    overflow: hidden;
+  html, body { height:100%; }
+  body{
+    margin:0;background:#000;display:flex;justify-content:center;align-items:center;
+    height:100vh;flex-direction:column;gap:16px;overflow:hidden
   }
-
-  #logo {
-    position: fixed;
-    top: 20px;
-    left: 20px;
-    width: 150px;
-    height: auto;
-    z-index: 10;
+  /* الفيديو خلفية فل سكرين على أي شاشة */
+  .bg{
+    position:fixed;inset:0;
+    width:100vw;height:100vh;
+    object-fit:cover;            /* يملأ الشاشة بدون تشويه */
+    user-select:none;-webkit-user-drag:none;pointer-events:none;
+    background:#000;
   }
-
-  canvas {
-    position: absolute;
-    bottom: 0;
-    width: 100%;
-    height: 300px;
-    z-index: 5;
+  /* الأزرار */
+  .controls{
+    position:relative;
+    z-index:2;
+    display:flex;
+    gap:12px;
+    margin-top:150px; /* ↓ هذا اللي ينزل الأزرار تحت نص الشاشة */
   }
-
-  #controls {
-    position: fixed;
-    bottom: 30px;
-    right: 30px;
-    z-index: 20;
+  button{
+    padding:10px 18px;
+    border:0;
+    border-radius:8px;
+    cursor:pointer;
+    background-color:#007BFF; /* أزرق */
+    color:#fff;
   }
-
-  button {
-    padding: 10px 20px;
-    margin-left: 10px;
+  button:disabled{
+    background-color:#555; /* لون لما يكون معطل */
+  }
+  #status{
+    position:relative;
+    z-index:2;
+    color:#9eea9e;
+    font-family:system-ui,Arial,sans-serif
   }
 </style>
 </head>
 <body>
-<img id="logo" src="{{ url_for('static', filename='logo.png') }}" alt="شعار">
-<canvas id="visualizer"></canvas>
+  <!-- الفيديو: خلفية أساسية دائمة -->
+  <video id="bgVideo"
+         class="bg"
+         src="{{ url_for('static', filename='roua.MP4') }}"
+         autoplay muted playsinline preload="auto" loop>
+  </video>
 
-<div id="controls">
-  <button id="startBtn">بدء المحادثة</button>
-  <button id="stopBtn">إيقاف</button>
-</div>
+  <div class="controls">
+    <button id="start">بدء المحادثة</button>
+    <button id="stop" disabled>إيقاف</button>
+  </div>
+  <div id="status"></div>
 
-<!-- صوت البوت -->
-<audio id="agent-audio" autoplay playsinline></audio>
+  <!-- صوت البوت (منفصل عن الخلفية) -->
+  <audio id="agent-audio" autoplay playsinline></audio>
 
-<script type="module">
-  import { Conversation } from "https://cdn.jsdelivr.net/npm/@elevenlabs/client@0.5.0/+esm";
+  <script type="module">
+    import { Conversation } from "https://cdn.jsdelivr.net/npm/@elevenlabs/client@0.5.0/+esm";
 
-  const startBtn   = document.getElementById('startBtn');
-  const stopBtn    = document.getElementById('stopBtn');
-  const agentAudio = document.getElementById('agent-audio');
+    const startBtn   = document.getElementById('start');
+    const stopBtn    = document.getElementById('stop');
+    const statusEl   = document.getElementById('status');
+    const agentAudio = document.getElementById('agent-audio');
+    const bgVideo    = document.getElementById('bgVideo');
 
-  let convo = null;
+    let convo = null;
+    const setStatus = (t)=> statusEl.textContent = t;
 
-  async function start() {
-    const tokenRes = await fetch('/conversation-token');
-    if (!tokenRes.ok) throw new Error('فشل جلب التوكن');
-    const conversationToken = await tokenRes.text();
+    /* ضمان التشغيل الفوري وإعادة المحاولة لو رفض المتصفح */
+    bgVideo.addEventListener('canplay', () => { bgVideo.play().catch(()=>{}); });
+    bgVideo.play().catch(()=>{}); // محاولة أولى
 
-    convo = await Conversation.startSession({
-      conversationToken,
-      connectionType: "webrtc",
-    });
+    async function start() {
+      try {
+        setStatus('نجهّز المايك…');
+        await navigator.mediaDevices.getUserMedia({ audio: true });
 
-    const remoteStream =
-      (convo.getRemoteMediaStream && convo.getRemoteMediaStream()) ||
-      (convo.getRemoteStream && convo.getRemoteStream()) || null;
+        setStatus('نجيب توكن الجلسة…');
+        const tokenRes = await fetch('/conversation-token');
+        if (!tokenRes.ok) throw new Error('فشل جلب التوكن');
+        const conversationToken = await tokenRes.text();
 
-    if (remoteStream) {
-      agentAudio.srcObject = remoteStream;
-      await agentAudio.play().catch(()=>{});
-    }
+        setStatus('نبدأ الجلسة مع رؤى…');
+        convo = await Conversation.startSession({
+          conversationToken,
+          connectionType: "webrtc",
+          onConnect: () => setStatus('متصلة — تكلم معها الآن ✨'),
+          onDisconnect: () => setStatus('انتهت الجلسة'),
+          onError: (e) => setStatus(`خطأ: ${e?.message || e}`),
+        });
 
-    startBtn.disabled = true;
-    stopBtn.disabled  = false;
-  }
+        const remoteStream =
+          (convo.getRemoteMediaStream && convo.getRemoteMediaStream()) ||
+          (convo.getRemoteStream && convo.getRemoteStream()) || null;
 
-  async function stop() {
-    if (convo) { await convo.endSession(); convo = null; }
-    startBtn.disabled = false;
-    stopBtn.disabled  = true;
-  }
+        if (remoteStream) {
+          agentAudio.srcObject = remoteStream;
+          await agentAudio.play().catch(()=>{});
+        }
 
-  startBtn.addEventListener('click', start);
-  stopBtn.addEventListener('click', stop);
-</script>
-
-<!-- موجات متحركة بشكل مستمر -->
-<script>
-  const canvas = document.getElementById('visualizer');
-  const ctx = canvas.getContext('2d');
-
-  function resizeCanvas() {
-    canvas.width = window.innerWidth;
-    canvas.height = 300;
-  }
-  window.addEventListener('resize', resizeCanvas);
-  resizeCanvas();
-
-  let step = 0;
-
-  function drawWaves() {
-    requestAnimationFrame(drawWaves);
-
-    ctx.fillStyle = '#001633'; // خلفية كحلي
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = '#ffffff'; // موجات بيضاء
-
-    // نرسم موجتين مختلفتين
-    for (let j = 0; j < 2; j++) {
-      ctx.beginPath();
-      const amplitude = 40 + j*10;
-      const frequency = 0.02 + j*0.01;
-      for (let i = 0; i < canvas.width; i++) {
-        const x = i;
-        const y = canvas.height/2 + Math.sin(i*frequency + step + j*50) * amplitude;
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
+        startBtn.disabled = true;
+        stopBtn.disabled  = false;
+      } catch (err) {
+        setStatus(`خطأ: ${err?.message || err}`);
       }
-      ctx.stroke();
     }
 
-    step += 0.05; // سرعة الحركة
-  }
+    async function stop() {
+      try {
+        if (convo) { await convo.endSession(); convo = null; }
+      } finally {
+        startBtn.disabled = false;
+        stopBtn.disabled  = true;
+        setStatus('أوقفت الجلسة.');
+      }
+    }
 
-  drawWaves();
-</script>
+    startBtn.addEventListener('click', start);
+    stopBtn.addEventListener('click', stop);
+  </script>
 </body>
 </html>
