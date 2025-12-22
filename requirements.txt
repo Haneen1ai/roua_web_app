@@ -4,4 +4,6 @@ elevenlabs
 gunicorn
 requests
 flask-socketio==5.3.6
-eventlet
+
+
+
