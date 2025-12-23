@@ -82,7 +82,7 @@
         setStatus('نجهّز المايك…');
         await navigator.mediaDevices.getUserMedia({ audio: true });
 
-        setStatus('نجيب توكن الجلسة…');
+        setStatus('wait..');
         const tokenRes = await fetch('/conversation-token');
         if (!tokenRes.ok) throw new Error('فشل جلب التوكن');
         const conversationToken = await tokenRes.text();
