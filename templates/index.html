@@ -1,88 +1,56 @@
 <!DOCTYPE html>
-<html lang="ar" dir="rtl">
+<html lang="ar">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>واجهة رؤى</title>
-
-  <style>
-    html,body{margin:0;height:100%;background:#000;overflow:hidden}
-
-    video.bg{
-      position:fixed;inset:0;
-      width:100vw;height:100vh;
-      object-fit:cover;
-      z-index:0;
-      user-select:none;-webkit-user-drag:none;pointer-events:none;
-      background:#000;
-    }
-
-    canvas{
-      position:fixed;inset:0;
-      z-index:1;
-      pointer-events:none;
-    }
-
-    /* فلتر خفيف يغطي الشاشة */
-    .overlay{
-      position:fixed;inset:0;
-      z-index:2;
-      pointer-events:none;
-      backdrop-filter: blur(1.4px) brightness(0.98) contrast(1.03);
-    }
-
-    /* الأزرار بالنص بالضبط */
-    .controls{
-      position:fixed;
-      left:50%;
-      bottom:70px;
-      transform:translateX(-50%);
-      z-index:5;
-      display:flex;
-      gap:12px;
-    }
-    button{
-      padding:12px 22px;
-      border:0;
-      border-radius:10px;
-      cursor:pointer;
-      background:#007BFF;
-      color:#fff;
-      font-size:16px;
-    }
-    button:disabled{background:#555}
-
-    #status{
-      position:fixed;
-      left:50%;
-      bottom:25px;
-      transform:translateX(-50%);
-      z-index:5;
-      color:#9eea9e;
-      font-family:system-ui,Arial;
-      font-size:14px;
-      text-shadow:0 1px 8px rgba(0,0,0,.65);
-    }
-  </style>
-
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
-    }
+<meta charset="UTF-8">
+<title>واجهة رؤى</title>
+<style>
+  html, body { height:100%; }
+  body{
+    margin:0;background:#000;display:flex;justify-content:center;align-items:center;
+    height:100vh;flex-direction:column;gap:16px;overflow:hidden
   }
-  </script>
+  /* الفيديو خلفية فل سكرين على أي شاشة */
+  .bg{
+    position:fixed;inset:0;
+    width:100vw;height:100vh;
+    object-fit:cover;            /* يملأ الشاشة بدون تشويه */
+    user-select:none;-webkit-user-drag:none;pointer-events:none;
+    background:#000;
+  }
+  /* الأزرار */
+  .controls{
+    position:relative;
+    z-index:2;
+    display:flex;
+    gap:12px;
+    margin-top:150px; /* ↓ هذا اللي ينزل الأزرار تحت نص الشاشة */
+  }
+  button{
+    padding:10px 18px;
+    border:0;
+    border-radius:8px;
+    cursor:pointer;
+    background-color:#007BFF; /* أزرق */
+    color:#fff;
+  }
+  button:disabled{
+    background-color:#555; /* لون لما يكون معطل */
+  }
+  #status{
+    position:relative;
+    z-index:2;
+    color:#9eea9e;
+    font-family:system-ui,Arial,sans-serif
+  }
+</style>
 </head>
-
 <body>
-
-  <video id="bgVideo" class="bg" autoplay muted loop playsinline preload="auto">
-    <source src="{{ url_for('static', filename='roua.MP4') }}" type="video/mp4">
+  <!-- الفيديو: خلفية أساسية دائمة -->
+  <video id="bgVideo"
+         class="bg"
+         src="{{ url_for('static', filename='roua.MP4') }}"
+         autoplay muted playsinline preload="auto" loop>
   </video>
-
-  <canvas id="c"></canvas>
-  <div class="overlay"></div>
 
   <div class="controls">
     <button id="start">بدء المحادثة</button>
@@ -90,276 +58,72 @@
   </div>
   <div id="status"></div>
 
-  <audio id="agentAudio" autoplay playsinline></audio>
+  <!-- صوت البوت (منفصل عن الخلفية) -->
+  <audio id="agent-audio" autoplay playsinline></audio>
 
   <script type="module">
-    import * as THREE from "three";
-    import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
     import { Conversation } from "https://cdn.jsdelivr.net/npm/@elevenlabs/client@0.5.0/+esm";
 
     const startBtn   = document.getElementById('start');
     const stopBtn    = document.getElementById('stop');
     const statusEl   = document.getElementById('status');
-    const agentAudio = document.getElementById('agentAudio');
+    const agentAudio = document.getElementById('agent-audio');
     const bgVideo    = document.getElementById('bgVideo');
 
-    const setStatus = (t)=> { statusEl.textContent = t; };
-
-    // ثبات الفيديو
-    bgVideo.addEventListener('canplay', () => { bgVideo.play().catch(()=>{}); });
-    bgVideo.play().catch(()=>{});
-
-    /* ======================
-       3D Scene
-    ====================== */
-    const canvas = document.getElementById("c");
-    const renderer = new THREE.WebGLRenderer({canvas, alpha:true, antialias:true});
-    renderer.setSize(innerWidth, innerHeight);
-    renderer.setPixelRatio(Math.min(devicePixelRatio,2));
-
-    const scene = new THREE.Scene();
-
-    const camera = new THREE.PerspectiveCamera(35, innerWidth/innerHeight, 0.01, 100);
-    camera.position.set(0, 0, 3);
-    camera.lookAt(0,0,0);
-
-    scene.add(new THREE.AmbientLight(0xffffff, 1.2));
-    const d = new THREE.DirectionalLight(0xffffff, 1.6);
-    d.position.set(2,3,4);
-    scene.add(d);
-
-    let mouthMesh = null;
-    let mouthIndex = -1;
-
-    // MOUTH_FIX (paste these values)
-    const MOUTH_FIX = {
-      x: -0.0250,
-      y: 0.0510,
-      z: 0.2020,
-      scale: 1.2320,
-      rotZDeg: 1.20
-    };
-
-    function applyMouthFix(){
-      if(!mouthMesh) return;
-      mouthMesh.position.set(MOUTH_FIX.x, MOUTH_FIX.y, MOUTH_FIX.z);
-      mouthMesh.scale.setScalar(MOUTH_FIX.scale);
-      mouthMesh.rotation.z = THREE.MathUtils.degToRad(MOUTH_FIX.rotZDeg);
-    }
-
-    // تحميل المودل
-    const loader = new GLTFLoader();
-    loader.load(
-      "{{ url_for('static', filename='my2.glb') }}",
-      (gltf)=>{const model = gltf.scene;
-
-        // 1) أضفه أولاً
-        scene.add(model);
-
-        // 2) توسيط + تحجيم لضمان الظهور (حتى لو المودل مقصوص)
-        const box = new THREE.Box3().setFromObject(model);
-        const center = new THREE.Vector3(); box.getCenter(center);
-        const size = new THREE.Vector3(); box.getSize(size);
-
-        model.position.sub(center);
-
-        const maxDim = Math.max(size.x, size.y, size.z) || 1;
-        const desired = 2.0; // حجم مناسب أمام الكاميرا
-        const s = desired / maxDim;
-        model.scale.setScalar(s);
-
-        // ضمان إنه قدام الكاميرا (لو يختفي)
-        model.position.z = 0;
-
-        // نلقط الميش اللي فيه MouthOpen
-        model.traverse(o=>{
-          if(o.isMesh && o.morphTargetDictionary && o.morphTargetDictionary["MouthOpen"] !== undefined){
-            mouthMesh = o;
-            mouthIndex = o.morphTargetDictionary["MouthOpen"];
-          }
-        });
-
-        if(!mouthMesh){
-          console.warn("❌ MouthOpen morph not found in model");
-          setStatus("خطأ: MouthOpen غير موجود بالمودل");
-          return;
-        }
-
-        // ابدأ الفم شبه مقفل
-        mouthMesh.morphTargetInfluences[mouthIndex] = 0.10;
-
-        // طبّق قياساتك
-        applyMouthFix();
-
-        setStatus("جاهزة. اضغطي بدء المحادثة.");
-      },
-      undefined,
-      (err)=>{
-        console.error(err);
-        setStatus("خطأ: فشل تحميل my2.glb");
-      }
-    );
-
-    /* ======================
-       Lip Sync (WebAudio)
-       - صامت: 0.1
-       - كلام: يفتح/يسكر بسرعة داخل 0.1..0.7
-    ====================== */
-    let audioCtx = null;
-    let analyser = null;
-    let freqData = null;
-    let audioReady = false;
-
-    function initAudioAnalyser(){
-      if(audioReady) return;
-
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      const src = audioCtx.createMediaElementSource(agentAudio);
-
-      analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 512;
-      freqData = new Uint8Array(analyser.frequencyBinCount);
-
-      src.connect(analyser);
-      analyser.connect(audioCtx.destination);
-
-      audioReady = true;
-    }
-
-    function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
-
-    let smoothAmp = 0;
-    let wobblePhase = 0;
-
-    const MIN_OPEN = 0.10;
-    const MAX_OPEN = 0.70;
-
-    function updateMouthFromAudio(){
-      if(!audioReady  !mouthMesh  mouthIndex < 0) return;
-
-      analyser.getByteFrequencyData(freqData);
-
-      // نطاق الكلام (مفيد أكثر من جمع كل الترددات)
-      let sum = 0, count = 0;
-      const startBin = 6;
-      const endBin   = 70;
-
-      for(let i=startBin; i<=endBin; i++){
-        sum += freqData[i];
-        count++;
-      }
-
-      const avg = count ? (sum / count) : 0;
-      const amp = avg / 255;
-
-      // تنعيم
-      smoothAmp = smoothAmp + (amp - smoothAmp) * 0.35;
-
-      // كشف كلام
-      const talking = smoothAmp > 0.04;
-
-      // اهتزاز سريع يعطي إحساس حروف
-      wobblePhase += talking ? 0.55 : 0.25;
-      const wobble = (Math.sin(wobblePhase) * 0.5 + 0.5); // 0..1
-
-      let target;
-      if(!talking){
-        target = MIN_OPEN;
-      }else{
-        const base = MIN_OPEN + smoothAmp * 1.2;
-        target = base + wobble * (0.18 + smoothAmp * 0.25);
-        target = clamp(target, MIN_OPEN, MAX_OPEN);
-      }
-
-      // تطبيق سريع لكن ناعم
-      const cur = mouthMesh.morphTargetInfluences[mouthIndex] ?? MIN_OPEN;
-      mouthMesh.morphTargetInfluences[mouthIndex] = cur + (target - cur) * 0.55;
-    }
-
-    /* ======================
-       ElevenLabs Conversation
-    ====================== */
     let convo = null;
+    const setStatus = (t)=> statusEl.textContent = t;
 
-    async function start(){
-      try{
-        setStatus("نجهّز المايك…");
-        await navigator.mediaDevices.getUserMedia({ audio:true });
+    /* ضمان التشغيل الفوري وإعادة المحاولة لو رفض المتصفح */
+    bgVideo.addEventListener('canplay', () => { bgVideo.play().catch(()=>{}); });
+    bgVideo.play().catch(()=>{}); // محاولة أولى
 
-        setStatus("نجيب توكن الجلسة…");
+    async function start() {
+      try {
+        setStatus('نجهّز المايك…');
+        await navigator.mediaDevices.getUserMedia({ audio: true });
+
+        setStatus('نجيب توكن الجلسة…');
         const tokenRes = await fetch('/conversation-token');
-        if(!tokenRes.ok) throw new Error("فشل جلب التوكن");
+        if (!tokenRes.ok) throw new Error('فشل جلب التوكن');
         const conversationToken = await tokenRes.text();
 
-        setStatus("نبدأ الجلسة مع رؤى…");
+        setStatus('نبدأ الجلسة مع رؤى…');
         convo = await Conversation.startSession({
-          conversationToken,connectionType: "webrtc",
-          onConnect: () => setStatus("متصلة — تكلمي معها الآن ✨"),
-          onDisconnect: () => setStatus("انتهت الجلسة"),
-          onError: (e) => setStatus(`خطأ: ${e?.message || e}`)
+          conversationToken,
+          connectionType: "webrtc",
+          onConnect: () => setStatus('متصلة — تكلم معها الآن ✨'),
+          onDisconnect: () => setStatus('انتهت الجلسة'),
+          onError: (e) => setStatus(`خطأ: ${e?.message || e}`),
         });
 
         const remoteStream =
           (convo.getRemoteMediaStream && convo.getRemoteMediaStream()) ||
-          (convo.getRemoteStream && convo.getRemoteStream()) ||
-          null;
+          (convo.getRemoteStream && convo.getRemoteStream()) || null;
 
-        if(remoteStream){
+        if (remoteStream) {
           agentAudio.srcObject = remoteStream;
-
-          // مهم: التحليل يبدأ بعد ضغط زر (حل autoplay)
-          initAudioAnalyser();
-          await audioCtx.resume().catch(()=>{});
-
           await agentAudio.play().catch(()=>{});
-        }else{
-          setStatus("الجلسة اتصلت، لكن ما وصل صوت (Remote Stream).");
         }
 
         startBtn.disabled = true;
         stopBtn.disabled  = false;
-
-      }catch(err){
+      } catch (err) {
         setStatus(`خطأ: ${err?.message || err}`);
       }
     }
 
-    async function stop(){
-      try{
-        if(convo){
-          await convo.endSession();
-          convo = null;
-        }
-      }finally{
+    async function stop() {
+      try {
+        if (convo) { await convo.endSession(); convo = null; }
+      } finally {
         startBtn.disabled = false;
         stopBtn.disabled  = true;
-        setStatus("أوقفت الجلسة.");
-
-        if(mouthMesh && mouthIndex >= 0){
-          mouthMesh.morphTargetInfluences[mouthIndex] = MIN_OPEN;
-        }
+        setStatus('أوقفت الجلسة.');
       }
     }
 
     startBtn.addEventListener('click', start);
     stopBtn.addEventListener('click', stop);
-
-    /* ======================
-       Render Loop
-    ====================== */
-    function animate(){
-      requestAnimationFrame(animate);
-      updateMouthFromAudio();
-      renderer.render(scene, camera);
-    }
-    animate();
-
-    addEventListener("resize", ()=>{
-      camera.aspect = innerWidth/innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(innerWidth, innerHeight);
-    });
   </script>
-
 </body>
 </html>
