@@ -1,76 +1,80 @@
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>واجهة رؤى</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>واجهة رؤى</title>
 
-<style>
-  html,body{margin:0;height:100%;background:#000;overflow:hidden}
+  <style>
+    html,body{margin:0;height:100%;background:#000;overflow:hidden}
 
-  video.bg{
-    position:fixed;inset:0;
-    width:100vw;height:100vh;
-    object-fit:cover;
-    z-index:0;
-    user-select:none;-webkit-user-drag:none;pointer-events:none;
-    background:#000;
-  }
+    video.bg{
+      position:fixed;inset:0;
+      width:100vw;height:100vh;
+      object-fit:cover;
+      z-index:0;
+      user-select:none;-webkit-user-drag:none;pointer-events:none;
+      background:#000;
+    }
 
-  canvas{
-    position:fixed;inset:0;z-index:1;
-    pointer-events:none;
-  }
+    canvas{
+      position:fixed;inset:0;
+      z-index:1;
+      pointer-events:none;
+    }
 
-  /* فلتر خفيف يغطي الشاشة */
-  .overlay{
-    position:fixed;inset:0;z-index:2;
-    pointer-events:none;
-    backdrop-filter: blur(1.4px) brightness(0.98) contrast(1.03);
-  }
+    /* فلتر خفيف يغطي الشاشة */
+    .overlay{
+      position:fixed;inset:0;
+      z-index:2;
+      pointer-events:none;
+      backdrop-filter: blur(1.4px) brightness(0.98) contrast(1.03);
+    }
 
-  /* الأزرار بالنص بالضبط */
-  .controls{
-    position:fixed;
-    left:50%;
-    bottom:70px;
-    transform:translateX(-50%);
-    z-index:5;
-    display:flex;
-    gap:12px;
-  }
-  button{
-    padding:12px 22px;
-    border:0;
-    border-radius:10px;
-    cursor:pointer;
-    background:#007BFF;
-    color:#fff;
-    font-size:16px;
-  }
-  button:disabled{background:#555}
-  #status{
-    position:fixed;
-    left:50%;
-    bottom:25px;
-    transform:translateX(-50%);
-    z-index:5;
-    color:#9eea9e;
-    font-family:system-ui,Arial;
-    font-size:14px;
-  }
-</style>
+    /* الأزرار بالنص بالضبط */
+    .controls{
+      position:fixed;
+      left:50%;
+      bottom:70px;
+      transform:translateX(-50%);
+      z-index:5;
+      display:flex;
+      gap:12px;
+    }
+    button{
+      padding:12px 22px;
+      border:0;
+      border-radius:10px;
+      cursor:pointer;
+      background:#007BFF;
+      color:#fff;
+      font-size:16px;
+    }
+    button:disabled{background:#555}
 
-<script type="importmap">
-{
-  "imports": {
-    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
-  }
-}
-</script>
+    #status{
+      position:fixed;
+      left:50%;
+      bottom:25px;
+      transform:translateX(-50%);
+      z-index:5;
+      color:#9eea9e;
+      font-family:system-ui,Arial;
+      font-size:14px;
+      text-shadow:0 1px 8px rgba(0,0,0,.65);
+    }
+  </style>
 
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
 </head>
+
 <body>
 
   <video id="bgVideo" class="bg" autoplay muted loop playsinline preload="auto">
@@ -98,7 +102,8 @@
     const statusEl   = document.getElementById('status');
     const agentAudio = document.getElementById('agentAudio');
     const bgVideo    = document.getElementById('bgVideo');
-    const setStatus = (t)=> statusEl.textContent = t;
+
+    const setStatus = (t)=> { statusEl.textContent = t; };
 
     // ثبات الفيديو
     bgVideo.addEventListener('canplay', () => { bgVideo.play().catch(()=>{}); });
@@ -113,11 +118,13 @@
     renderer.setPixelRatio(Math.min(devicePixelRatio,2));
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(35, innerWidth/innerHeight, 0.01, 50);
-    camera.position.set(0, 0, 3);
 
-    scene.add(new THREE.AmbientLight(0xffffff, 1.3));
-    const d = new THREE.DirectionalLight(0xffffff, 1.8);
+    const camera = new THREE.PerspectiveCamera(35, innerWidth/innerHeight, 0.01, 100);
+    camera.position.set(0, 0, 3);
+    camera.lookAt(0,0,0);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 1.2));
+    const d = new THREE.DirectionalLight(0xffffff, 1.6);
     d.position.set(2,3,4);
     scene.add(d);
 
@@ -144,15 +151,25 @@
     const loader = new GLTFLoader();
     loader.load(
       "{{ url_for('static', filename='my2.glb') }}",
-      (gltf)=>{
-        const model = gltf.scene;
+      (gltf)=>{const model = gltf.scene;
+
+        // 1) أضفه أولاً
         scene.add(model);
 
-        // توسيط + تحجيم لضمان الظهور
+        // 2) توسيط + تحجيم لضمان الظهور (حتى لو المودل مقصوص)
         const box = new THREE.Box3().setFromObject(model);
-        const center = new THREE.Vector3(); box.getCenter(center);model.position.sub(center);
+        const center = new THREE.Vector3(); box.getCenter(center);
         const size = new THREE.Vector3(); box.getSize(size);
-        model.scale.setScalar(2 / (Math.max(size.x,size.y,size.z) || 1));
+
+        model.position.sub(center);
+
+        const maxDim = Math.max(size.x, size.y, size.z) || 1;
+        const desired = 2.0; // حجم مناسب أمام الكاميرا
+        const s = desired / maxDim;
+        model.scale.setScalar(s);
+
+        // ضمان إنه قدام الكاميرا (لو يختفي)
+        model.position.z = 0;
 
         // نلقط الميش اللي فيه MouthOpen
         model.traverse(o=>{
@@ -169,8 +186,11 @@
         }
 
         // ابدأ الفم شبه مقفل
-        mouthMesh.morphTargetInfluences[mouthIndex] = 0.1;
+        mouthMesh.morphTargetInfluences[mouthIndex] = 0.10;
+
+        // طبّق قياساتك
         applyMouthFix();
+
         setStatus("جاهزة. اضغطي بدء المحادثة.");
       },
       undefined,
@@ -192,13 +212,17 @@
 
     function initAudioAnalyser(){
       if(audioReady) return;
+
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       const src = audioCtx.createMediaElementSource(agentAudio);
+
       analyser = audioCtx.createAnalyser();
       analyser.fftSize = 512;
       freqData = new Uint8Array(analyser.frequencyBinCount);
+
       src.connect(analyser);
       analyser.connect(audioCtx.destination);
+
       audioReady = true;
     }
 
@@ -206,6 +230,7 @@
 
     let smoothAmp = 0;
     let wobblePhase = 0;
+
     const MIN_OPEN = 0.10;
     const MAX_OPEN = 0.70;
 
@@ -214,14 +239,16 @@
 
       analyser.getByteFrequencyData(freqData);
 
-      // نطاق الكلام تقريبًا بدل كل الترددات
-      let sum=0, count=0;
+      // نطاق الكلام (مفيد أكثر من جمع كل الترددات)
+      let sum = 0, count = 0;
       const startBin = 6;
       const endBin   = 70;
-      for(let i=startBin;i<=endBin;i++){
+
+      for(let i=startBin; i<=endBin; i++){
         sum += freqData[i];
         count++;
       }
+
       const avg = count ? (sum / count) : 0;
       const amp = avg / 255;
 
@@ -266,8 +293,7 @@
 
         setStatus("نبدأ الجلسة مع رؤى…");
         convo = await Conversation.startSession({
-          conversationToken,
-          connectionType: "webrtc",
+          conversationToken,connectionType: "webrtc",
           onConnect: () => setStatus("متصلة — تكلمي معها الآن ✨"),
           onDisconnect: () => setStatus("انتهت الجلسة"),
           onError: (e) => setStatus(`خطأ: ${e?.message || e}`)
@@ -275,15 +301,19 @@
 
         const remoteStream =
           (convo.getRemoteMediaStream && convo.getRemoteMediaStream()) ||
-          (convo.getRemoteStream && convo.getRemoteStream()) || null;
+          (convo.getRemoteStream && convo.getRemoteStream()) ||
+          null;
 
         if(remoteStream){
           agentAudio.srcObject = remoteStream;
 
-          // يبدأ التحليل بعد زر البدء (حل مشاكل autoplay)initAudioAnalyser();
+          // مهم: التحليل يبدأ بعد ضغط زر (حل autoplay)
+          initAudioAnalyser();
           await audioCtx.resume().catch(()=>{});
 
           await agentAudio.play().catch(()=>{});
+        }else{
+          setStatus("الجلسة اتصلت، لكن ما وصل صوت (Remote Stream).");
         }
 
         startBtn.disabled = true;
@@ -296,13 +326,15 @@
 
     async function stop(){
       try{
-        if(convo){ await convo.endSession(); convo = null; }
+        if(convo){
+          await convo.endSession();
+          convo = null;
+        }
       }finally{
         startBtn.disabled = false;
         stopBtn.disabled  = true;
         setStatus("أوقفت الجلسة.");
 
-        // رجّع الفم شبه مقفل
         if(mouthMesh && mouthIndex >= 0){
           mouthMesh.morphTargetInfluences[mouthIndex] = MIN_OPEN;
         }
